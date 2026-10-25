@@ -10,6 +10,8 @@
 #include <libultraship/bridge/windowbridge.h>
 #include "soh/Enhancements/gameconsole.h"
 #include "soh/OTRGlobals.h"
+#include "soh/Enhancements/tas/ShipGZ.h"
+#include "soh/Enhancements/game-interactor/GameInteractor_Hooks.h"
 
 #define GFXPOOL_HEAD_MAGIC 0x1234
 #define GFXPOOL_TAIL_MAGIC 0x5678
@@ -433,6 +435,7 @@ uint64_t GetPerfCounter();
 extern AudioMgr gAudioMgr;
 
 extern void ProcessSaveStateRequests(void);
+extern void Graph_ProcessGfxCommandsFrozen(Gfx* commands, s32 slowMotion);
 
 static void RunFrame() {
     u32 size;
@@ -475,6 +478,15 @@ static void RunFrame() {
 
             Graph_StartFrame();
 
+            // SoH [ShipGZ] Pause / frame advance: when frozen, neither input polling, game logic nor audio
+            // advance; the previous frame's display list is presented again (like gz's state_main_hook).
+            if (!ShipGZ_BeginFrame()) {
+                Graph_ProcessGfxCommandsFrozen(runFrameContext.gfxCtx.workBuffer, !ShipGZ_IsFrozen());
+                runFrameContext.state = 1;
+                ProcessSaveStateRequests();
+                return;
+            }
+
             PadMgr_ThreadEntry(&gPadMgr);
 
             Graph_Update(&runFrameContext.gfxCtx, gGameState);
@@ -485,6 +497,13 @@ static void RunFrame() {
             }
 
             Graph_ProcessGfxCommands(runFrameContext.gfxCtx.workBuffer);
+
+            // SoH [ShipGZ] A reset recorded in (or requested during) a macro is executed after the frame.
+            if (ShipGZ_EndFrame()) {
+                SET_NEXT_GAMESTATE(gGameState, TitleSetup_Init, GameState);
+                gGameState->running = false;
+                GameInteractor_ExecuteOnExitGame(gSaveContext.fileNum);
+            }
 
             // uint64_t diff = (ticksB - ticksA) / (freq / 1000);
             // printf("Frame simulated in %ims\n", diff);

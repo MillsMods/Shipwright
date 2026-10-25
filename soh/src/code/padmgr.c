@@ -6,6 +6,7 @@
 #include "soh/Enhancements/controls/Mouse.h"
 #include "soh/OTRGlobals.h"
 #include "soh/ResourceManagerHelpers.h"
+#include "soh/Enhancements/tas/ShipGZ.h"
 
 s32 D_8012D280 = 1;
 
@@ -217,6 +218,11 @@ void PadMgr_ProcessInputs(PadMgr* padMgr) {
     s32 buttonDiff;
 
     PadMgr_LockPadData(padMgr);
+
+    // SoH [ShipGZ] Command masking, virtual controllers and macro record / playback operate on the raw
+    // pads, before press / release edges are derived, so every consumer (gameplay, ocarina, menus) sees
+    // exactly the recorded input.
+    ShipGZ_ProcessPads(padMgr->pads, padMgr->nControllers);
 
     input = &padMgr->inputs[0];
     padnow1 = &padMgr->pads[0];

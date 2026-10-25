@@ -9,6 +9,8 @@
 #include <soh/OTRGlobals.h>
 #include <soh/OTRAudio.h>
 #include "savestate_serialize.h"
+#include "tas/ShipGZ.h"
+#include <libultraship/bridge/consolevariablebridge.h>
 
 extern "C" {
 #include "z64.h"
@@ -155,6 +157,10 @@ typedef struct SaveStateInfo {
 
     u8 transitionActorCount_copy;
     s16 transitionActorIds_copy[256];
+
+    // SoH [ShipGZ] Needed for deterministic replays from a state: the game RNG and the controller
+    // history PadMgr derives press / release edges from.
+    Input padMgrInputsCopy[4];
 
 } SaveStateInfo;
 
@@ -450,6 +456,11 @@ void SaveState::Save(void) {
     // Various static data
     SaveOverlayStaticData();
     SaveTransitionActors();
+
+    // SoH [ShipGZ]
+    info->rngSeed = Rand_GetState();
+    memcpy(info->padMgrInputsCopy, gPadMgr.inputs, sizeof(info->padMgrInputsCopy));
+    ShipGZ_OnStateSaved(this->slot);
 }
 
 void SaveState::Load(void) {
@@ -478,4 +489,11 @@ void SaveState::Load(void) {
     D_801755D0 = info->D_801755D0_copy;
     LoadOverlayStaticData();
     LoadTransitionActors();
+
+    // SoH [ShipGZ]
+    if (!CVarGetInteger("gShipGZ.IgnoreStateRng", 0)) {
+        Rand_SetState(info->rngSeed);
+    }
+    memcpy(gPadMgr.inputs, info->padMgrInputsCopy, sizeof(info->padMgrInputsCopy));
+    ShipGZ_OnStateLoaded(this->slot);
 }
