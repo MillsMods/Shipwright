@@ -1213,10 +1213,14 @@ extern "C" void ShipGZ_OnStateLoaded(uint32_t slot) {
     }
     Engine& e = sEngine;
     const StateMeta& m = e.stateMeta[slot];
-    // gz: if a macro is active and the state carries a macro frame, seek to it so that recording
-    // continues (and overwrites) from there. States without a frame leave the macro alone.
+    // Loading a state saved during a macro restores that point in the movie. In recording mode,
+    // discard the abandoned branch so later frames extend from the restored point rather than
+    // leaving the previous take's future frames attached to this one.
     if (m.valid && m.movieFrame >= 0 && e.state != MovieState::Idle) {
         MovieSeek(m.movieFrame);
+        if (e.state == MovieState::Recording) {
+            MovieTrim();
+        }
     }
     // the next frame's input edges come from the restored PadMgr history, so drop held combo state
     e.padHeldPrev = 0;
