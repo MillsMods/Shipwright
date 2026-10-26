@@ -152,9 +152,7 @@ void ShipGZWindow::InitElement() {
 }
 
 void ShipGZWindow::UpdateElement() {
-    if (sCaptureKeyCmd < 0 && sCapturePadCmd < 0) {
-        PollKeyboardCommands();
-    }
+    ShipGZ_Update(sCaptureKeyCmd >= 0 || sCapturePadCmd >= 0);
     if (CVarGetInteger(SHIPGZ_CVAR("Osd"), 1)) {
         DrawOsd();
     }
@@ -198,7 +196,7 @@ void ShipGZWindow::DrawOsd() {
         text(IM_COL32(0xC0, 0xC0, 0xC0, 0xFF), e.framesQueued == 0 ? "||" : "|>");
         any = true;
     }
-    float speed = ShipGZ_GetSpeed();
+    float speed = CVarGetFloat(SHIPGZ_CVAR("Speed"), 1.0f);
     if (std::fabs(speed - 1.0f) > 0.001f) {
         snprintf(buf, sizeof(buf), "%s%d%%", any ? "  " : "", (int)std::lround(speed * 100.0f));
         text(IM_COL32(0x80, 0xC0, 0xFF, 0xFF), buf);
@@ -376,7 +374,9 @@ void ShipGZWindow::DrawMacroTab() {
     // macro frame (gz: movie_pos_proc) - editing it seeks the macro
     int frame = e.frame;
     ImGui::SetNextItemWidth(140);
-    if (ImGui::InputInt("macro frame", &frame, 1, 10, ImGuiInputTextFlags_EnterReturnsTrue)) {
+    // ImGui's InputInt asserts on ImGuiInputTextFlags_EnterReturnsTrue, so seek when editing finishes instead
+    ImGui::InputInt("macro frame", &frame, 1, 10);
+    if (ImGui::IsItemDeactivatedAfterEdit()) {
         MovieSeek(frame);
     }
     ImGui::SameLine();
@@ -747,7 +747,9 @@ void ShipGZWindow::DrawInputEditorTab() {
                 bool on = (in.buttons & kButtons[b].bit) != 0;
                 ImVec2 pos = ImGui::GetCursorScreenPos();
                 ImVec2 size(20, rowHeight);
-                ImGui::InvisibleButton(kButtons[b].label, size);
+                ImGui::PushID(b);
+                ImGui::InvisibleButton("##btn", size);
+                ImGui::PopID();
                 bool hovered = ImGui::IsItemHovered();
                 if (ImGui::IsItemActivated()) {
                     sPaintColumn = b;

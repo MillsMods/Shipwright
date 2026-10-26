@@ -9,8 +9,7 @@
 #include <soh/OTRGlobals.h>
 #include <soh/OTRAudio.h>
 #include "savestate_serialize.h"
-#include "tas/ShipGZ.h"
-#include <libultraship/bridge/consolevariablebridge.h>
+#include "game-interactor/GameInteractor_Hooks.h"
 
 extern "C" {
 #include "z64.h"
@@ -457,10 +456,10 @@ void SaveState::Save(void) {
     SaveOverlayStaticData();
     SaveTransitionActors();
 
-    // SoH [ShipGZ]
-    info->rngSeed = Rand_GetState();
-    memcpy(info->padMgrInputsCopy, gPadMgr.inputs, sizeof(info->padMgrInputsCopy));
-    ShipGZ_OnStateSaved(this->slot);
+    // ShipGZ extends the savestate only while its GameInteractor subscriber is enabled.
+    GameInteractor_ExecuteOnShipGZBeforeStateSave(&info->rngSeed, info->padMgrInputsCopy,
+                                                  (sizeof(info->padMgrInputsCopy) / sizeof(info->padMgrInputsCopy[0])));
+    GameInteractor_ExecuteOnShipGZStateSaved(this->slot);
 }
 
 void SaveState::Load(void) {
@@ -490,10 +489,8 @@ void SaveState::Load(void) {
     LoadOverlayStaticData();
     LoadTransitionActors();
 
-    // SoH [ShipGZ]
-    if (!CVarGetInteger("gShipGZ.IgnoreStateRng", 0)) {
-        Rand_SetState(info->rngSeed);
-    }
-    memcpy(gPadMgr.inputs, info->padMgrInputsCopy, sizeof(info->padMgrInputsCopy));
-    ShipGZ_OnStateLoaded(this->slot);
+    // Restore deterministic state and macro position through GameInteractor subscribers.
+    GameInteractor_ExecuteOnShipGZAfterStateLoad(info->rngSeed, info->padMgrInputsCopy,
+                                                 (sizeof(info->padMgrInputsCopy) / sizeof(info->padMgrInputsCopy[0])));
+    GameInteractor_ExecuteOnShipGZStateLoaded(this->slot);
 }

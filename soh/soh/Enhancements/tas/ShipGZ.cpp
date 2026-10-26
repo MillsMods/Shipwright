@@ -27,6 +27,8 @@
 #include "soh/OTRGlobals.h"
 #include "soh/util.h"
 #include "soh/Enhancements/savestates.h"
+#include "soh/Enhancements/game-interactor/GameInteractor.h"
+#include "soh/Enhancements/game-interactor/GameInteractor_Hooks.h"
 
 extern "C" {
 #include "z64.h"
@@ -931,7 +933,7 @@ std::string ExportInputCsv(const std::string& path) {
 
 using namespace ShipGZ;
 
-extern "C" int32_t ShipGZ_BeginFrame(void) {
+static void ShipGZ_BeginFrameHook(bool* runGameFrame, bool* slowMotion) {
     Engine& e = sEngine;
     if (!CVarGetInteger(SHIPGZ_CVAR("Enabled"), 1)) {
         e.enabled = false;
@@ -940,13 +942,17 @@ extern "C" int32_t ShipGZ_BeginFrame(void) {
         e.resetPending = false;
         e.resetRequestedThisFrame = false;
         sPendingCommands.clear();
-        return 1;
+        *runGameFrame = true;
+        *slowMotion = false;
+        return;
     }
     e.enabled = true;
 
     if (!e.hasPresentedFrame) {
         // There is no previous display list to show yet, so the very first frame always runs.
-        return 1;
+        *runGameFrame = true;
+        *slowMotion = false;
+        return;
     }
 
     bool run = false;
@@ -954,7 +960,7 @@ extern "C" int32_t ShipGZ_BeginFrame(void) {
         e.framesQueued--;
         run = true;
     } else if (e.framesQueued == -1) {
-        float speed = ShipGZ_GetSpeed();
+        float speed = GameInteractor_ExecuteOnShipGZGetSpeed(1.0f);
         if (speed >= 1.0f) {
             run = true;
         } else {
@@ -976,14 +982,19 @@ extern "C" int32_t ShipGZ_BeginFrame(void) {
         // a combo might have just queued a frame (e.g. frame advance)
         if (e.framesQueued > 0) {
             e.framesQueued--;
-            return 1;
+            *runGameFrame = true;
+            *slowMotion = false;
+            return;
         }
-        return 0;
+        *runGameFrame = false;
+        *slowMotion = e.framesQueued == -1;
+        return;
     }
-    return 1;
+    *runGameFrame = true;
+    *slowMotion = false;
 }
 
-extern "C" int32_t ShipGZ_EndFrame(void) {
+static void ShipGZ_EndFrameHook(bool* resetGame) {
     Engine& e = sEngine;
     e.hasPresentedFrame = true;
     e.totalGameFrames++;
@@ -997,12 +1008,13 @@ extern "C" int32_t ShipGZ_EndFrame(void) {
 
     if (e.resetRequestedThisFrame) {
         e.resetRequestedThisFrame = false;
-        return 1;
+        *resetGame = true;
+        return;
     }
-    return 0;
+    *resetGame = false;
 }
 
-extern "C" void ShipGZ_ProcessPads(OSContPad* pads, int32_t numPads) {
+static void ShipGZ_ProcessPadsHook(OSContPad* pads, int32_t numPads) {
     Engine& e = sEngine;
     if (!CVarGetInteger(SHIPGZ_CVAR("Enabled"), 1)) {
         e.enabled = false;
@@ -1121,7 +1133,11 @@ extern "C" void ShipGZ_ProcessPads(OSContPad* pads, int32_t numPads) {
     e.lastGameInput = PadToInput(pads[0]);
 }
 
-extern "C" uint32_t ShipGZ_FilterRandSeed(uint32_t naturalSeed) {
+static void ShipGZ_FilterRandSeedHook(uint32_t naturalSeed, uint32_t* seed) {
+    *seed = naturalSeed;
+    if (!CVarGetInteger(SHIPGZ_CVAR("Enabled"), 1)) {
+        return;
+    }
     Engine& e = sEngine;
     uint32_t old = Rand_GetState();
 
@@ -1133,7 +1149,7 @@ extern "C" uint32_t ShipGZ_FilterRandSeed(uint32_t naturalSeed) {
         s.newSeed = naturalSeed;
         e.movie.seeds.insert(e.movie.seeds.begin() + e.seedPos, s);
         e.seedPos++;
-        return naturalSeed;
+        return;
     }
 
     if (e.state == MovieState::Playing) {
@@ -1145,7 +1161,8 @@ extern "C" uint32_t ShipGZ_FilterRandSeed(uint32_t naturalSeed) {
         if (e.seedPos < seeds.size() && seeds[e.seedPos].frame == e.frame) {
             const MovieSeed& s = seeds[e.seedPos++];
             if (s.oldSeed == old || CVarGetInteger(SHIPGZ_CVAR("ForceSeeds"), 0)) {
-                return s.newSeed;
+                *seed = s.newSeed;
+                return;
             }
             e.desyncCount++;
             Log("rng desync detected at frame %d", e.frame);
@@ -1156,15 +1173,19 @@ extern "C" uint32_t ShipGZ_FilterRandSeed(uint32_t naturalSeed) {
     }
 
     if (e.state == MovieState::Idle && CVarGetInteger(SHIPGZ_CVAR("FixedSeed"), 0)) {
-        return (uint32_t)CVarGetInteger(SHIPGZ_CVAR("FixedSeedValue"), 0);
+        *seed = (uint32_t)CVarGetInteger(SHIPGZ_CVAR("FixedSeedValue"), 0);
     }
-    return naturalSeed;
 }
 
-extern "C" uint32_t ShipGZ_FilterAudioRandom(uint32_t naturalValue) {
+static void ShipGZ_FilterAudioRandomHook(uint32_t naturalValue, uint32_t* value) {
+    *value = naturalValue;
+    if (!CVarGetInteger(SHIPGZ_CVAR("Enabled"), 1)) {
+        return;
+    }
     Engine& e = sEngine;
     if (e.state == MovieState::Idle) {
-        return naturalValue;
+        *value = naturalValue;
+        return;
     }
     // gz afx_rand_hook: produce a number that is deterministic within macros. The audio RNG is
     // seeded from the CPU counter, so derive the value from the game RNG and the macro frame instead.
@@ -1172,30 +1193,24 @@ extern "C" uint32_t ShipGZ_FilterAudioRandom(uint32_t naturalValue) {
     for (int i = 0; i < 3; i++) {
         v = v * 0x0019660D + 0x3C6EF35F;
     }
-    return v;
+    *value = v;
 }
 
-extern "C" int32_t ShipGZ_IsMovieActive(void) {
-    return sEngine.enabled && sEngine.state != MovieState::Idle;
-}
-
-extern "C" int32_t ShipGZ_IsFrozen(void) {
-    return sEngine.enabled && sEngine.framesQueued != -1;
-}
-
-extern "C" float ShipGZ_GetSpeed(void) {
+static void ShipGZ_GetSpeedHook(float* speed) {
     if (!CVarGetInteger(SHIPGZ_CVAR("Enabled"), 1)) {
-        return 1.0f;
+        *speed = 1.0f;
+        return;
     }
-    float speed = CVarGetFloat(SHIPGZ_CVAR("Speed"), 1.0f);
-    if (!(speed > 0.0f)) {
-        return 1.0f;
+    float configuredSpeed = CVarGetFloat(SHIPGZ_CVAR("Speed"), 1.0f);
+    if (!(configuredSpeed > 0.0f)) {
+        *speed = 1.0f;
+        return;
     }
-    return std::clamp(speed, 0.01f, 8.0f);
+    *speed = std::clamp(configuredSpeed, 0.01f, 8.0f);
 }
 
-extern "C" void ShipGZ_OnStateSaved(uint32_t slot) {
-    if (slot >= (uint32_t)kNumStateSlots) {
+static void ShipGZ_StateSavedHook(uint32_t slot) {
+    if (!CVarGetInteger(SHIPGZ_CVAR("Enabled"), 1) || slot >= (uint32_t)kNumStateSlots) {
         return;
     }
     Engine& e = sEngine;
@@ -1207,8 +1222,8 @@ extern "C" void ShipGZ_OnStateSaved(uint32_t slot) {
     m.rng = Rand_GetState();
 }
 
-extern "C" void ShipGZ_OnStateLoaded(uint32_t slot) {
-    if (slot >= (uint32_t)kNumStateSlots) {
+static void ShipGZ_StateLoadedHook(uint32_t slot) {
+    if (!CVarGetInteger(SHIPGZ_CVAR("Enabled"), 1) || slot >= (uint32_t)kNumStateSlots) {
         return;
     }
     Engine& e = sEngine;
@@ -1222,6 +1237,57 @@ extern "C" void ShipGZ_OnStateLoaded(uint32_t slot) {
             MovieTrim();
         }
     }
-    // the next frame's input edges come from the restored PadMgr history, so drop held combo state
     e.padHeldPrev = 0;
+}
+
+static void ShipGZ_BeforeStateSaveHook(uint32_t* rngSeed, void* padInputs, size_t numPadInputs) {
+    // Preserve the existing savestate RNG/input snapshot regardless of whether ShipGZ is enabled.
+    if (rngSeed == nullptr || padInputs == nullptr) {
+        return;
+    }
+    *rngSeed = Rand_GetState();
+    memcpy(padInputs, gPadMgr.inputs, std::min<size_t>(numPadInputs, ARRAY_COUNT(gPadMgr.inputs)) * sizeof(Input));
+}
+
+static void ShipGZ_AfterStateLoadHook(uint32_t rngSeed, void* padInputs, size_t numPadInputs) {
+    // Restore the existing savestate RNG/input snapshot regardless of whether ShipGZ is enabled.
+    if (padInputs == nullptr) {
+        return;
+    }
+    if (!CVarGetInteger(SHIPGZ_CVAR("IgnoreStateRng"), 0)) {
+        Rand_SetState(rngSeed);
+    }
+    memcpy(gPadMgr.inputs, padInputs, std::min<size_t>(numPadInputs, ARRAY_COUNT(gPadMgr.inputs)) * sizeof(Input));
+}
+
+extern "C" void ShipGZ_InitHooks(void) {
+    static bool initialized = false;
+    if (initialized || GameInteractor::Instance == nullptr) {
+        return;
+    }
+    GameInteractor::Instance->RegisterGameHook<GameInteractor::OnShipGZBeginFrame>(ShipGZ_BeginFrameHook);
+    GameInteractor::Instance->RegisterGameHook<GameInteractor::OnShipGZEndFrame>(ShipGZ_EndFrameHook);
+    GameInteractor::Instance->RegisterGameHook<GameInteractor::OnShipGZProcessPads>(ShipGZ_ProcessPadsHook);
+    GameInteractor::Instance->RegisterGameHook<GameInteractor::OnShipGZFilterRandSeed>(ShipGZ_FilterRandSeedHook);
+    GameInteractor::Instance->RegisterGameHook<GameInteractor::OnShipGZFilterAudioRandom>(ShipGZ_FilterAudioRandomHook);
+    GameInteractor::Instance->RegisterGameHook<GameInteractor::OnShipGZGetSpeed>(ShipGZ_GetSpeedHook);
+    GameInteractor::Instance->RegisterGameHook<GameInteractor::OnShipGZStateSaved>(ShipGZ_StateSavedHook);
+    GameInteractor::Instance->RegisterGameHook<GameInteractor::OnShipGZStateLoaded>(ShipGZ_StateLoadedHook);
+    GameInteractor::Instance->RegisterGameHook<GameInteractor::OnShipGZBeforeStateSave>(ShipGZ_BeforeStateSaveHook);
+    GameInteractor::Instance->RegisterGameHook<GameInteractor::OnShipGZAfterStateLoad>(ShipGZ_AfterStateLoadHook);
+    initialized = true;
+}
+
+extern "C" int32_t ShipGZ_IsFrozen(void) {
+    return sEngine.enabled && sEngine.framesQueued != -1;
+}
+
+extern "C" float ShipGZ_GetSpeed(void) {
+    return GameInteractor_ExecuteOnShipGZGetSpeed(1.0f);
+}
+
+void ShipGZ_Update(int32_t commandCaptureActive) {
+    if (!commandCaptureActive) {
+        PollKeyboardCommands();
+    }
 }

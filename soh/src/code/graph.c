@@ -10,7 +10,6 @@
 #include <libultraship/bridge/windowbridge.h>
 #include "soh/Enhancements/gameconsole.h"
 #include "soh/OTRGlobals.h"
-#include "soh/Enhancements/tas/ShipGZ.h"
 #include "soh/Enhancements/game-interactor/GameInteractor_Hooks.h"
 
 #define GFXPOOL_HEAD_MAGIC 0x1234
@@ -478,10 +477,12 @@ static void RunFrame() {
 
             Graph_StartFrame();
 
-            // SoH [ShipGZ] Pause / frame advance: when frozen, neither input polling, game logic nor audio
-            // advance; the previous frame's display list is presented again (like gz's state_main_hook).
-            if (!ShipGZ_BeginFrame()) {
-                Graph_ProcessGfxCommandsFrozen(runFrameContext.gfxCtx.workBuffer, !ShipGZ_IsFrozen());
+            // ShipGZ frame control is dispatched through GameInteractor; default is the unmodified game loop.
+            bool runGameFrame = true;
+            bool slowMotionFrame = false;
+            GameInteractor_ExecuteOnShipGZBeginFrame(&runGameFrame, &slowMotionFrame);
+            if (!runGameFrame) {
+                Graph_ProcessGfxCommandsFrozen(runFrameContext.gfxCtx.workBuffer, slowMotionFrame);
                 runFrameContext.state = 1;
                 ProcessSaveStateRequests();
                 return;
@@ -498,8 +499,10 @@ static void RunFrame() {
 
             Graph_ProcessGfxCommands(runFrameContext.gfxCtx.workBuffer);
 
-            // SoH [ShipGZ] A reset recorded in (or requested during) a macro is executed after the frame.
-            if (ShipGZ_EndFrame()) {
+            // ShipGZ can request a recorded reset at the frame boundary through GameInteractor.
+            bool resetGame = false;
+            GameInteractor_ExecuteOnShipGZEndFrame(&resetGame);
+            if (resetGame) {
                 SET_NEXT_GAMESTATE(gGameState, TitleSetup_Init, GameState);
                 gGameState->running = false;
                 GameInteractor_ExecuteOnExitGame(gSaveContext.fileNum);

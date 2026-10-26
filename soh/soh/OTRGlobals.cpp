@@ -40,6 +40,7 @@
 #include "soh/Enhancements/randomizer/settings.h"
 #include "soh/Enhancements/savestates.h"
 #include "soh/Enhancements/tas/ShipGZ.h"
+#include "soh/Enhancements/game-interactor/GameInteractor_Hooks.h"
 #include "soh/Enhancements/speedrun/Speedrun.h"
 #include "frame_interpolation.h"
 #include "SohGui/SohMenu.h"
@@ -1559,6 +1560,7 @@ extern "C" void InitOTR(int argc, char* argv[]) {
     CustomMessageManager::Instance = new CustomMessageManager();
     ItemTableManager::Instance = new ItemTableManager();
     GameInteractor::Instance = new GameInteractor();
+    ShipGZ_InitHooks();
     SaveManager::Instance = new SaveManager();
 
     std::shared_ptr<Ship::Config> conf = OTRGlobals::Instance->context->GetConfig();
@@ -1843,9 +1845,8 @@ extern "C" void Graph_ProcessGfxCommands(Gfx* commands) {
         fps = original_fps;
     }
 
-    // SoH [ShipGZ] Fast forward: present exactly one (non-interpolated) frame per game frame and raise the
-    // frame limiter. Slow motion is handled by ShipGZ_BeginFrame inserting frozen frames.
-    const float shipGzSpeed = ShipGZ_GetSpeed();
+    // ShipGZ controls playback rate through a GameInteractor hook; default speed preserves normal rendering.
+    const float shipGzSpeed = GameInteractor_ExecuteOnShipGZGetSpeed(1.0f);
     if (shipGzSpeed > 1.0f) {
         fps = original_fps;
     }
